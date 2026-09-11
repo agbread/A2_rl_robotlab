@@ -178,6 +178,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.video:
         import imageio
         video_path = os.path.join(log_dir, "videos", "play", time.strftime("%Y-%m-%d_%H-%M-%S") + ".mp4")
+        os.makedirs(os.path.dirname(video_path), exist_ok=True)
         writer = imageio.get_writer(video_path, fps=int(1/env.unwrapped.step_dt))
         # video_kwargs = {
         #     "video_folder": os.path.join(log_dir, "videos", "play"),
@@ -239,6 +240,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # reset environment
     obs = env.get_observations()
     timestep = 0
+    last_frame = None  # last valid rendered frame (the renderer returns an empty buffer every other call)
+    ref_brightness = None  # running brightness reference to reject under-exposed transient frames
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -251,7 +254,22 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
         if args_cli.video:
-            writer.append_data(env.env.render())
+            frame = env.env.render()
+            # skip empty or under-exposed transient buffers (renderer artifacts);
+            # reuse the previous valid frame to keep real-time pacing
+            if frame is not None:
+                brightness = float(frame.mean())
+                if brightness > 0.5 and (ref_brightness is None or brightness > 0.75 * ref_brightness):
+                    last_frame = frame
+                    ref_brightness = (
+                        brightness if ref_brightness is None else 0.98 * ref_brightness + 0.02 * brightness
+                    )
+            if last_frame is not None:
+                writer.append_data(last_frame)
+                timestep += 1
+                # stop recording (and close the writer properly) once the requested length is reached
+                if timestep >= args_cli.video_length:
+                    break
         # camera_follow(env)
 
         # time delay for real-time evaluation

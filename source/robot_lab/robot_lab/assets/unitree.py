@@ -12,7 +12,9 @@ from isaaclab.assets.articulation import ArticulationCfg
 from isaaclab.utils import configclass
 
 from robot_lab.assets import ISAACLAB_ASSETS_DATA_DIR
-from robot_lab.assets.unitree_actuator import UnitreeActuatorCfg_Go2HV
+
+from robot_lab.assets.unitree_actuator import UnitreeActuatorCfg, UnitreeActuatorCfg_Go2HV
+
 
 ##
 # Configuration
@@ -155,6 +157,69 @@ GO2_CFG_UNITREE = UnitreeArticulationCfg(
         "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
         "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
         "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint"
+    ],
+    # fmt: on
+)
+
+
+# Unitree A2 config.
+# PD gains / init pose from official unitree_rl_mjlab
+# [https://github.com/unitreerobotics/unitree_rl_mjlab] (a2_constants.py)
+# Torque/velocity limits from a2_description URDF.
+A2_CFG = UnitreeArticulationCfg(
+    spawn=UnitreeUrdfFileCfg(
+        asset_path=f"{ISAACLAB_ASSETS_DATA_DIR}/a2_description/urdf/a2.urdf",
+        merge_fixed_joints=True,  # camera/lidar links are merged; feet survive via dont_collapse
+    ),
+    init_state=ArticulationCfg.InitialStateCfg(
+        pos=(0.0, 0.0, 0.4),
+        joint_pos={
+            # NOTE: hip signs are opposite to Go2 (R=+0.1, L=-0.1)
+            ".*R_hip_joint": 0.1,
+            ".*L_hip_joint": -0.1,
+            ".*_thigh_joint": 0.9,
+            ".*_calf_joint": -1.8,
+        },
+        joint_vel={".*": 0.0},
+    ),
+    actuators={
+        "hip_thigh": UnitreeActuatorCfg(
+            joint_names_expr=[".*_hip_joint", ".*_thigh_joint"],
+            Y1=120.0,
+            Y2=120.0,
+            X1=20.0,
+            X2=22.0,
+            effort_limit=120.0,
+            velocity_limit=22.0,
+            stiffness=100.0,
+            damping=4.0,
+            armature=0.03,
+            friction=0.0,
+            min_delay=0,
+            max_delay=4,
+        ),
+        "calf": UnitreeActuatorCfg(
+            joint_names_expr=[".*_calf_joint"],
+            Y1=180.0,
+            Y2=180.0,
+            X1=13.0,
+            X2=14.6667,
+            effort_limit=180.0,
+            velocity_limit=14.6667,
+            stiffness=150.0,
+            damping=6.0,
+            armature=0.03,
+            friction=0.0,
+            min_delay=0,
+            max_delay=4,
+        ),
+    },
+    # fmt: off
+    joint_sdk_names=[
+        "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+        "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+        "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+        "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
     ],
     # fmt: on
 )
