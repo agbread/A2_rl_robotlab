@@ -1,5 +1,6 @@
 from isaaclab.envs import ManagerBasedRLEnv, ManagerBasedRLEnvCfg, VecEnvStepReturn
 from robot_lab.tasks.go2.manager.action_manager import ActionManagerGo2, ActionManagerGo2WithDelay
+from robot_lab.tasks.go2.mdp.curriculums import gradual_reward_weight_modification
 
 import torch
 
@@ -11,6 +12,17 @@ class Go2Env(ManagerBasedRLEnv):
         # override action manager
         self.action_manager = ActionManagerGo2(self.cfg.actions, self)
         print("[Go2Env-INFO] Overriding action manager with ActionManagerGo2: ", self.action_manager)
+
+    def restore_training_progress(self, step_count: int) -> None:
+        """Restore step-based curricula before collecting a resumed rollout."""
+        self.common_step_counter = step_count
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        for name in self.curriculum_manager.active_terms:
+            term_cfg = getattr(self.cfg.curriculum, name)
+            if term_cfg.func is gradual_reward_weight_modification:
+                term_cfg.func(self, env_ids, **term_cfg.params)
+        self.command_manager.reset(env_ids)
+        self.observation_manager.reset(env_ids)
 
 
 class ActionDelayGo2Env(ManagerBasedRLEnv):

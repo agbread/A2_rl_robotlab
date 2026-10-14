@@ -178,6 +178,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if args_cli.video:
         import imageio
         video_path = os.path.join(log_dir, "videos", "play", time.strftime("%Y-%m-%d_%H-%M-%S") + ".mp4")
+        os.makedirs(os.path.dirname(video_path), exist_ok=True)
         writer = imageio.get_writer(video_path, fps=int(1/env.unwrapped.step_dt))
         # video_kwargs = {
         #     "video_folder": os.path.join(log_dir, "videos", "play"),
@@ -252,6 +253,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             policy_nn.reset(dones)
         if args_cli.video:
             writer.append_data(env.env.render())
+            timestep += 1
+            if timestep >= args_cli.video_length:
+                break
         # camera_follow(env)
 
         # time delay for real-time evaluation

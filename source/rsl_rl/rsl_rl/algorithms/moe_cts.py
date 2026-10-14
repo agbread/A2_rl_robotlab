@@ -56,6 +56,8 @@ class MoECTS:
     ) -> None:
         assert isinstance(policy, ActorCriticMoECTS), "Policy must be an instance of ActorCriticMoECTS."
         assert not policy.is_recurrent, "Recurrent policies are not supported yet for MoECTS."
+        if not 0.0 < teacher_env_ratio < 1.0:
+            raise ValueError("teacher_env_ratio must be strictly between 0 and 1.")
         # Device-related parameters
         self.device = device
         self.is_multi_gpu = multi_gpu_cfg is not None
@@ -123,13 +125,19 @@ class MoECTS:
         # Teacher-student environment split
         self.teacher_num_envs = max(int(num_envs * teacher_env_ratio), 1)
         self.student_num_envs = num_envs - self.teacher_num_envs
-        student_env_ratio = 1 - teacher_env_ratio
-        self.teacher_env_idxs = torch.tensor([i for i in range(num_envs) if i % int(1/student_env_ratio) != 0], device=self.device)
-        self.student_env_idxs = torch.tensor([i for i in range(num_envs) if i % int(1/student_env_ratio) == 0], device=self.device)
-        assert len(self.teacher_env_idxs) == self.teacher_num_envs, f"{len(self.teacher_env_idxs)=} != {self.teacher_num_envs=}"
-        assert len(self.student_env_idxs) == self.student_num_envs, f"{len(self.student_env_idxs)=} != {self.student_num_envs=}"
+        env_idxs = torch.arange(num_envs, device=self.device)
+        self.student_env_idxs = (
+            torch.arange(self.student_num_envs, device=self.device) * num_envs // max(self.student_num_envs, 1)
+        )
+        teacher_mask = torch.ones(num_envs, dtype=torch.bool, device=self.device)
+        teacher_mask[self.student_env_idxs] = False
+        self.teacher_env_idxs = env_idxs[teacher_mask]
         
     def act(self, obs: TensorDict) -> torch.Tensor:
+        if self.student_num_envs == 0:
+            raise ValueError(
+                "MoECTS training requires at least two environments; single-environment inference is supported."
+            )
         # Compute the actions and values
         def _get_results(obs, is_teacher):
             actions = self.policy.act(obs, is_teacher)
@@ -233,9 +241,8 @@ class MoECTS:
         # RND loss
         mean_rnd_loss = 0 if self.rnd else None
 
-        # Get mini batch generator
-        generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
-        data = list(generator)
+        # Reuse permutations rather than keeping copies of every epoch's mini-batches.
+        indices = self.storage.mini_batch_indices()
 
         # Iterate over batches
         teacher_samples = self.teacher_num_envs * self.storage.num_transitions_per_env // self.num_mini_batches
@@ -251,7 +258,7 @@ class MoECTS:
             old_sigma_batch,
             hidden_states_batch,
             masks_batch,
-        ) in data:
+        ) in self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs, indices):
             original_batch_size = obs_batch.batch_size[0]
 
             # Check if we should normalize advantages per mini batch
@@ -388,7 +395,7 @@ class MoECTS:
             old_sigma_batch,
             hidden_states_batch,
             masks_batch,
-        ) in data:
+        ) in self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs, indices):
             # Student encoder loss
             obs_a_batch = self.policy.get_actor_obs(obs_batch)
             obs_a_batch = self.policy.actor_obs_normalizer(obs_a_batch)

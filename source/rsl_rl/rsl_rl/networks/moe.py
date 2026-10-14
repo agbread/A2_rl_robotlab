@@ -96,7 +96,7 @@ class MLP(nn.Module):
         if isinstance(output_dim, int):
             layers.append(nn.Linear(last_dim, output_dim))
         elif isinstance(output_dim, tuple) or isinstance(output_dim, list):
-            layers.append(nn.Linear(last_dim, np.prod(output_dim)))
+            layers.append(nn.Linear(last_dim, int(np.prod(output_dim))))
             layers.append(nn.Unflatten(dim=-1, unflattened_size=output_dim))
         else:
             raise ValueError("output_dim must be int, tuple or list")        

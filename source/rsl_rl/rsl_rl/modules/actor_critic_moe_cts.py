@@ -141,12 +141,12 @@ class ActorCriticMoECTS(nn.Module):
         # Action noise
         self.noise_std_type = noise_std_type
         if self.state_dependent_std:
-            torch.nn.init.zeros_(self.actor[-2].weight[num_actions:])
+            torch.nn.init.zeros_(self.actor.network[-2].weight[num_actions:])
             if self.noise_std_type == "scalar":
-                torch.nn.init.constant_(self.actor[-2].bias[num_actions:], init_noise_std)
+                torch.nn.init.constant_(self.actor.network[-2].bias[num_actions:], init_noise_std)
             elif self.noise_std_type == "log":
                 torch.nn.init.constant_(
-                    self.actor[-2].bias[num_actions:], torch.log(torch.tensor(init_noise_std + 1e-7))
+                    self.actor.network[-2].bias[num_actions:], torch.log(torch.tensor(init_noise_std + 1e-7))
                 )
             else:
                 raise ValueError(f"Unknown standard deviation type: {self.noise_std_type}. Should be 'scalar' or 'log'")

@@ -165,7 +165,7 @@ def main() -> None:
             if counter % render_substeps == 0:
                 mujoco_render_utils.update_external_rendering(viewer, ctype='viewer')
                 viewer.sync()
-            sleep_time = cfg.dt - (time.time() - step_start) - 0.1
+            sleep_time = cfg.dt - (time.time() - step_start)
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
