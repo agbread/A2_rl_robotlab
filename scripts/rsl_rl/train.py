@@ -113,11 +113,6 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     """Train with RSL-RL agent."""
     # override configurations with non-hydra CLI arguments
     agent_cfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
-    agent_cfg_dict = agent_cfg.to_dict()
-    agent_cfg_dict["robogauge"] = {
-        "enabled": args_cli.robogauge,
-        "port": args_cli.robogauge_port,
-    }
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
@@ -143,6 +138,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         seed = agent_cfg.seed + app_launcher.local_rank
         env_cfg.seed = seed
         agent_cfg.seed = seed
+
+    agent_cfg_dict = agent_cfg.to_dict()
+    agent_cfg_dict["robogauge"] = {
+        "enabled": args_cli.robogauge,
+        "port": args_cli.robogauge_port,
+    }
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)

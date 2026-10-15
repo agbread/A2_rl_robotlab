@@ -173,6 +173,9 @@ class OnPolicyRunnerCTS:
             "iter": self.current_learning_iteration,
             "infos": infos,
         }
+        env = getattr(self.env, "unwrapped", self.env)
+        if hasattr(env, "common_step_counter"):
+            saved_dict["env_step_counter"] = env.common_step_counter
         # Save RND model if used
         if self.alg_cfg["rnd_cfg"]:
             saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
@@ -268,6 +271,7 @@ class OnPolicyRunnerCTS:
         if load_optimizer and resumed_training:
             # Algorithm optimizer
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            self.alg.learning_rate = self.alg.optimizer.param_groups[0]["lr"]
             # Student encoder optimizer
             self.alg.optimizer_stu_enc.load_state_dict(loaded_dict["optimizer_stu_enc_state_dict"])
             # RND optimizer if used
@@ -275,7 +279,16 @@ class OnPolicyRunnerCTS:
                 self.alg.rnd_optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])
         # Load current learning iteration
         if resumed_training:
-            self.current_learning_iteration = loaded_dict["iter"]
+            self.current_learning_iteration = loaded_dict["iter"] + 1
+            env = getattr(self.env, "unwrapped", self.env)
+            if hasattr(env, "common_step_counter"):
+                step_count = loaded_dict.get(
+                    "env_step_counter", self.current_learning_iteration * self.cfg["num_steps_per_env"]
+                )
+                if hasattr(env, "restore_training_progress"):
+                    env.restore_training_progress(step_count)
+                else:
+                    env.common_step_counter = step_count
         return loaded_dict["infos"]
 
     def get_inference_policy(self, device: str | None = None) -> callable:

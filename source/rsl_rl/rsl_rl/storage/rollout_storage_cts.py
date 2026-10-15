@@ -126,8 +126,17 @@ class RolloutStorageCTS:
         for i in range(self.num_transitions_per_env):
             yield self.observations[i], self.actions[i], self.privileged_actions[i], self.dones[i]
 
+    def mini_batch_indices(self):
+        """Generate teacher/student permutations shared by both update passes."""
+        teacher_samples = self.teacher_num_envs * self.num_transitions_per_env
+        student_samples = self.student_num_envs * self.num_transitions_per_env
+        return (
+            torch.randperm(teacher_samples, device=self.device),
+            teacher_samples + torch.randperm(student_samples, device=self.device),
+        )
+
     # For reinforcement learning with feedforward networks
-    def mini_batch_generator(self, num_mini_batches: int, num_epochs: int = 8) -> Generator:
+    def mini_batch_generator(self, num_mini_batches: int, num_epochs: int = 8, indices=None) -> Generator:
         if self.training_type != "rl":
             raise ValueError("This function is only available for reinforcement learning training.")
         
@@ -136,8 +145,7 @@ class RolloutStorageCTS:
         student_samples_num = self.student_num_envs * self.num_transitions_per_env
         teacher_mini_batch_size = teacher_samples_num // num_mini_batches
         student_mini_batch_size = student_samples_num // num_mini_batches
-        teacher_indices = torch.randperm(teacher_samples_num, requires_grad=False, device=self.device)
-        student_indices = teacher_samples_num + torch.randperm(student_samples_num, requires_grad=False, device=self.device)
+        teacher_indices, student_indices = self.mini_batch_indices() if indices is None else indices
         
         # Core
         observations = self.observations.transpose(0, 1).flatten(0, 1)
