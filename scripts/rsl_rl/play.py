@@ -46,6 +46,9 @@ parser.add_argument(
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--keyboard", action="store_true", default=False, help="Whether to use keyboard.")
 parser.add_argument("--fix_commands", action="store_true", default=False, help="Fix the velocity commands.")
+parser.add_argument("--lin_vel_x", type=float, default=None, help="Fixed forward velocity [m/s]; implies --fix_commands.")
+parser.add_argument("--lin_vel_y", type=float, default=None, help="Fixed lateral velocity [m/s], +left; implies --fix_commands.")
+parser.add_argument("--ang_vel_z", type=float, default=None, help="Fixed yaw rate [rad/s], +CCW; implies --fix_commands.")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -93,8 +96,14 @@ def fix_commands(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvC
 
     Prefer locking the command generator to keep policy observations consistent
     with environment internal command state.
+    Uses --lin_vel_x/--lin_vel_y/--ang_vel_z (unset ones are 0); defaults to 1.0 m/s forward if none is given.
     """
-    fixed_lin_x, fixed_lin_y, fixed_ang_z = 1.0, 0.0, 0.0
+    custom_cmd = (args_cli.lin_vel_x, args_cli.lin_vel_y, args_cli.ang_vel_z)
+    if any(v is not None for v in custom_cmd):
+        fixed_lin_x, fixed_lin_y, fixed_ang_z = (v if v is not None else 0.0 for v in custom_cmd)
+    else:
+        fixed_lin_x, fixed_lin_y, fixed_ang_z = 1.0, 0.0, 0.0
+    print(f"[INFO] Fixed velocity command: lin_vel_x={fixed_lin_x}, lin_vel_y={fixed_lin_y}, ang_vel_z={fixed_ang_z}")
 
     base_velocity_cfg = getattr(getattr(env_cfg, "commands", None), "base_velocity", None)
     if base_velocity_cfg is None:
@@ -164,7 +173,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.log_dir = log_dir
 
     # fix velocity commands if specified
-    if args_cli.fix_commands:
+    if args_cli.fix_commands or any(v is not None for v in (args_cli.lin_vel_x, args_cli.lin_vel_y, args_cli.ang_vel_z)):
         fix_commands(env_cfg)
 
     # create isaac environment
