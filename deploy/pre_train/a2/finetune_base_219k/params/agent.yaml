@@ -1,19 +1,19 @@
 seed: 42
 device: cuda:0
 num_steps_per_env: 24
-max_iterations: 200
+max_iterations: 300000
 empirical_normalization: null
 obs_groups: {}
 clip_actions: null
-save_interval: 100
-experiment_name: a2_stairs_sym_cts
-run_name: pilot_symmetry_ascent
+save_interval: 500
+experiment_name: a2_moe_cts
+run_name: ''
 logger: tensorboard
 neptune_project: isaaclab
 wandb_project: isaaclab
-resume: false
-load_run: .*
-load_checkpoint: model_.*.pt
+resume: true
+load_run: 2026-08-25_18-59-58
+load_checkpoint: model_163500.pt
 class_name: OnPolicyRunnerCTS
 policy:
   class_name: ActorCriticMoECTS
@@ -45,8 +45,8 @@ algorithm:
   class_name: MoECTS
   num_learning_epochs: 5
   num_mini_batches: 4
-  learning_rate: 1.0e-05
-  schedule: fixed
+  learning_rate: 0.001
+  schedule: adaptive
   gamma: 0.99
   lam: 0.95
   entropy_coef: 0.01
@@ -57,17 +57,11 @@ algorithm:
   clip_param: 0.2
   normalize_advantage_per_mini_batch: false
   rnd_cfg: null
-  symmetry_cfg:
-    use_data_augmentation: false
-    use_mirror_loss: true
-    mirror_loss_coeff: 0.05
-    data_augmentation_func: robot_lab.tasks.a2.mdp.symmetry:mirror_a2_observations
-    ramp_updates: 200
+  symmetry_cfg: null
   load_balance_coef: 0.01
-  student_encoder_learning_rate: 0.0001
+  student_encoder_learning_rate: 0.001
   betas: !!python/tuple
   - 0.9
   - 0.999
   weight_decay: 0.0
   teacher_env_ratio: 0.75
-init_at_random_ep_len: false

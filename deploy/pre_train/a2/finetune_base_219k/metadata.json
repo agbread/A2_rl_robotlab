@@ -1,0 +1,51 @@
+{
+  "model_name": "A2 219k fine-tuning base",
+  "purpose": "Starting checkpoint for the planned A6000 stair curriculum and symmetry fine-tuning.",
+  "source_task": "RobotLab-A2-v0",
+  "source_run": "logs/rsl_rl/a2_moe_cts/2026-09-04_09-44-01",
+  "source_checkpoint": "model_219000.pt",
+  "checkpoint_iteration": 219000,
+  "includes_local_stair_symmetry_pilot_updates": false,
+  "checkpoint_contents": [
+    "teacher and student model weights",
+    "PPO optimizer state",
+    "student encoder optimizer state",
+    "iteration"
+  ],
+  "checkpoint_integrity": "Unmodified byte-for-byte copy of the original model_219000.pt.",
+  "legacy_checkpoint_note": "This checkpoint predates the new stair curriculum and mirror-ramp state; those states are initialized fresh for the new task.",
+  "existing_deployment_policy": {
+    "path": "deploy/pre_train/a2/a2_moe_cts_219k.pt",
+    "sha256": "592d06d307d88ce946e9510bb6d72120a4bbd00b1f1d8c858b6fd34eba182aa2",
+    "verification": "Fresh export of model_219000.pt matches the existing deployment policy over 40 history steps and two resets."
+  },
+  "a6000_finetuning": {
+    "task": "RobotLab-A2-Stairs-Sym-v0",
+    "initialization": "--warm_start",
+    "checkpoint": "deploy/pre_train/a2/finetune_base_219k/model_219000.pt",
+    "weight_source": "original 219k baseline",
+    "optimizer_state": "fresh",
+    "curriculum_state": "fresh",
+    "symmetry_ramp_state": "fresh",
+    "target": {
+      "rise_m": 0.15,
+      "tread_m": 0.2,
+      "upward_risers": 12
+    }
+  },
+  "config_note": "params/agent.yaml and params/env.yaml are provenance snapshots from the original training run, not launch settings for the new stair task. Machine-specific cache and export paths are repository-relative. Use the registered stair task for new fine-tuning settings.",
+  "files": {
+    "model_219000.pt": {
+      "bytes": 26367345,
+      "sha256": "026c47c54407397efd7a1be4fe0a2a485975c61f43c3513136ad154a5f31a4b9"
+    },
+    "params/agent.yaml": {
+      "bytes": 1332,
+      "sha256": "611bc32d9140f431378bd6904a5c4041e7468874767764c33eb8df4bfc8eae2d"
+    },
+    "params/env.yaml": {
+      "bytes": 65489,
+      "sha256": "717ce664abf29d4dd3b292e4b8c481c59d0a7817021a23e807e73808f819da89"
+    }
+  }
+}
