@@ -30,7 +30,7 @@ cd A2_rl_robotlab
 git remote add upstream https://github.com/wertyuilife2/go2_rl_robotlab.git
 ```
 
-The installation commands retain the existing `go2_rl_robotlab` Conda environment name.
+The installation and training commands use the `a2_rl_robotlab` Conda environment.
 
 ---
 
@@ -104,8 +104,8 @@ The installation commands retain the existing `go2_rl_robotlab` Conda environmen
 Install IsaacLab follow [official guide](https://isaac-sim.github.io/IsaacLab/v2.3.2/source/setup/installation/isaaclab_pip_installation.html):
 
 ```bash
-conda create -n go2_rl_robotlab python=3.11
-conda activate go2_rl_robotlab
+conda create -n a2_rl_robotlab python=3.11
+conda activate a2_rl_robotlab
 pip install --upgrade pip
 pip install isaaclab[isaacsim,all]==2.3.2.post1 --extra-index-url https://pypi.nvidia.com
 pip install -U torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
@@ -317,7 +317,7 @@ mutually exclusive. Run one training job at a time on a shared GPU and choose
 `--num_envs` for available memory.
 
 ```bash
-conda activate go2_rl_robotlab
+conda activate a2_rl_robotlab
 python scripts/rsl_rl/train.py --headless --task RobotLab-A2-Stairs-v0 \
   --num_envs 256 --max_iterations 200 --seed 42 --run_name pilot_control \
   --warm_start deploy/pre_train/a2/finetune_base_219k/model_219000.pt
@@ -377,7 +377,7 @@ After installing the repository on the A6000 PC, start the new stair/symmetry
 fine-tuning task from the 219k weights:
 
 ```bash
-conda activate go2_rl_robotlab
+conda activate a2_rl_robotlab
 python scripts/rsl_rl/train.py --headless --task RobotLab-A2-Stairs-Sym-v0 \
   --num_envs 256 --max_iterations 2000 --seed 42 --run_name a6000_stairs_sym \
   --warm_start deploy/pre_train/a2/finetune_base_219k/model_219000.pt
