@@ -28,6 +28,21 @@ gym.register(
     },
 )
 
+# Matched stair experiments: identical environment, optional mirror loss.
+for task_id, runner_cfg in (
+    ("RobotLab-A2-Stairs-v0", "StairsMoECTSRunnerCfg"),
+    ("RobotLab-A2-Stairs-Sym-v0", "StairsSymMoECTSRunnerCfg"),
+):
+    gym.register(
+        id=task_id,
+        entry_point="robot_lab.tasks.a2.env.stairs_env:A2StairsEnv",
+        disable_env_checker=True,
+        kwargs={
+            "env_cfg_entry_point": f"{__name__}.stairs_env_cfg:A2StairsEnvCfg",
+            "rsl_rl_cfg_entry_point": f"{__name__}.rsl_rl_cfg:{runner_cfg}",
+        },
+    )
+
 # The blacklist is used to prevent importing configs from sub-packages
 _BLACKLIST_PKGS = ["utils"]
 # Import all configs in this package

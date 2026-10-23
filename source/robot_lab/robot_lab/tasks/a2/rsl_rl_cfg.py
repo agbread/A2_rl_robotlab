@@ -84,3 +84,38 @@ class MoECTSCatELURunnerCfg(MoECTSRunnerCfg):
     def __post_init__(self):
         super().__post_init__()
         self.policy.activation = 'cat_elu'
+
+
+@configclass
+class StairsMoECTSRunnerCfg(MoECTSRunnerCfg):
+    """Conservative, weights-only fine-tuning settings for the A2 stair task."""
+
+    experiment_name = "a2_stairs_cts"
+    max_iterations = 2000
+    save_interval = 100
+    init_at_random_ep_len: bool = False
+
+    def __post_init__(self):
+        self.algorithm.learning_rate = 1.0e-5
+        self.algorithm.student_encoder_learning_rate = 1.0e-4
+        self.algorithm.schedule = "fixed"
+        self.algorithm.symmetry_cfg = None
+
+
+@configclass
+class StairsSymMoECTSRunnerCfg(StairsMoECTSRunnerCfg):
+    """Same task and PPO settings, with opt-in student action mirror consistency."""
+
+    experiment_name = "a2_stairs_sym_cts"
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Initial experimental weight, not a tuned optimum. Log the unweighted
+        # loss and validate gait/performance against StairsMoECTSRunnerCfg.
+        self.algorithm.symmetry_cfg = {
+            "use_data_augmentation": False,
+            "use_mirror_loss": True,
+            "mirror_loss_coeff": 0.05,
+            "data_augmentation_func": "robot_lab.tasks.a2.mdp.symmetry:mirror_a2_observations",
+            "ramp_updates": 200,
+        }

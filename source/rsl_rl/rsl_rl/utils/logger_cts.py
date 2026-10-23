@@ -137,20 +137,7 @@ class LoggerCTS:
             # Log episode extras
             extras_string = ""
             if self.ep_extras:
-                # Iterate over all keys in the episode info dictionary
-                for key in self.ep_extras[0]:
-                    infotensor = torch.tensor([], device=self.device)
-                    # Iterate over all steps
-                    for ep_info in self.ep_extras:
-                        # Handle missing, scalar, and zero dimensional tensors
-                        if key not in ep_info:
-                            continue
-                        if not isinstance(ep_info[key], torch.Tensor):
-                            ep_info[key] = torch.Tensor([ep_info[key]])
-                        if len(ep_info[key].shape) == 0:
-                            ep_info[key] = ep_info[key].unsqueeze(0)
-                        infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                    value = torch.mean(infotensor)
+                for key, value in self._aggregate_episode_extras().items():
                     if "/" in key:
                         self.writer.add_scalar(key, value, it)
                         extras_string += f"""{f"{key}:":>{pad}} {value:.4f}\n"""
@@ -248,6 +235,50 @@ class LoggerCTS:
 
             # Clear extras buffer
             self.ep_extras.clear()
+
+    def _aggregate_episode_extras(self) -> dict[str, torch.Tensor]:
+        """Keep legacy means while preserving conditional stair cumulative metrics.
+
+        IsaacLab may repeat the previous reset's log on steps without resets.
+        Stair *_total values are snapshots, so use the last available value;
+        summing them double-counts and averaging them loses the actual endpoint.
+        The union of keys also includes groups/stages first seen later in a rollout.
+        """
+        aggregated = {}
+        keys = dict.fromkeys(key for info in self.ep_extras for key in info)
+        for key in keys:
+            is_stair = "stairs/" in key and (key.startswith("stairs/") or "/stairs/" in key)
+            if is_stair and key.endswith("_total"):
+                latest = next(info[key] for info in reversed(self.ep_extras) if key in info)
+                aggregated[key] = torch.as_tensor(latest, device=self.device, dtype=torch.float64).mean()
+            else:
+                # Preserve the existing per-snapshot mean for all other metrics.
+                values = torch.tensor([], device=self.device)
+                for info in self.ep_extras:
+                    if key not in info:
+                        continue
+                    value = info[key]
+                    if not isinstance(value, torch.Tensor):
+                        value = torch.Tensor([value])
+                    if value.ndim == 0:
+                        value = value.unsqueeze(0)
+                    values = torch.cat((values, value.to(self.device)))
+                aggregated[key] = values.mean()
+
+        # Ratios of cumulative counts remain episode-weighted even when reset
+        # batches have unequal sizes and old reset logs are repeated.
+        for key in list(aggregated):
+            if not (key.endswith("/episodes_total") and (key.startswith("stairs/") or "/stairs/" in key)):
+                continue
+            denominator = aggregated[key]
+            if denominator.item() <= 0:
+                continue
+            prefix = key[:-len("episodes_total")]
+            for outcome in ("success", "ascent", "failure"):
+                numerator_key = f"{prefix}{outcome}_total"
+                if numerator_key in aggregated:
+                    aggregated[f"{prefix}{outcome}_rate_cumulative"] = aggregated[numerator_key] / denominator
+        return aggregated
 
     def save_model(self, path: str, it: int) -> None:
         """Save the model to external logging services if specified."""

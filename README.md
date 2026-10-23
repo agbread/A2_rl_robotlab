@@ -1,5 +1,5 @@
 <div align="center">
-	<h1 align="center">Go2 RL RobotLab</h1>
+	<h1 align="center">A2 RL RobotLab</h1>
 	<a href="https://robogauge.github.io/complete/">
 		<img src="https://img.shields.io/badge/Project-Page-green.svg" alt="Project Page"/>
 	</a>
@@ -16,9 +16,21 @@
 
 ## Overview
 
-Train a Unitree Go2 robot in IsaacLab, and deploy policy to MuJoCo for Sim2Sim. For more, see the [project page](https://robogauge.github.io/complete/).
+A2_rl_robotlab adapts IsaacLab / RobotLab locomotion training and MuJoCo Sim2Sim deployment for the Unitree A2. It is a fork of [wertyuilife2/go2_rl_robotlab](https://github.com/wertyuilife2/go2_rl_robotlab), retaining the upstream MoE-CTS implementation and Go2 support.
 
-It is an official [MoE-CTS](https://robogauge.github.io/static/files/arxiv.pdf) algorithm implementation in IsaacLab / RobotLab, as a reproduction of [go2_rl_gym](https://github.com/wty-yy/go2_rl_gym).
+A2 additions include the robot task and deployment assets, exact 15 cm rise / 20 cm tread stairs, a 6-to-12-step curriculum, optional gait symmetry training, and reproducible policy comparisons. See [A2 stair fine-tuning](#a2-12-step-stair-fine-tuning) for training and evaluation commands.
+
+The Go2 demonstrations and benchmark scores below are upstream reference results. The original paper and project are credited through the [upstream project page](https://robogauge.github.io/complete/). Original license and copyright notices are retained; see [LICENSE](LICENSE) and the [RSL-RL license](source/rsl_rl/LICENSE).
+
+## Clone
+
+```bash
+git clone https://github.com/agbread/A2_rl_robotlab.git
+cd A2_rl_robotlab
+git remote add upstream https://github.com/wertyuilife2/go2_rl_robotlab.git
+```
+
+The installation commands retain the existing `go2_rl_robotlab` Conda environment name.
 
 ---
 
@@ -274,3 +286,79 @@ This repository would not exist without the following open-source projects:
 
 Related publications implemented in this repo:
 - [CTS: Concurrent Teacher-Student Reinforcement Learning for Legged Locomotion](https://arxiv.org/pdf/2405.10830)
+
+
+## A2: 12-step stair fine-tuning
+
+The A2 stair tasks use exact box meshes: 15 cm rise, 20 cm tread, 12 consecutive
+upward risers (1.8 m total), a 1.5 m approach, and a 1.2 m added top landing.
+The course width is 3 m. Training and MuJoCo evaluation share
+`source/robot_lab/robot_lab/tasks/a2/stair_geometry.py`.
+
+- `RobotLab-A2-Stairs-v0`: control experiment without mirror loss.
+- `RobotLab-A2-Stairs-Sym-v0`: identical environment plus student-action mirror consistency.
+- Terrain columns: 40% fixed target, 20% 6/8/10/12-step curriculum,
+  20% neighboring dimensions (14/20, 16/20, 15/18, 15/22 cm), 20% flat.
+- Stair command: 0.3–0.5 m/s, fixed for each episode; yaw and lateral commands are zero.
+  Training completes after each foot has contacted the top platform and all feet are over it.
+  Curriculum promotion requires at least 90 successful ascents in the latest 100 completed curriculum episodes at the current level.
+  MuJoCo also measures stopping: another 0.4 s with four top contacts and tilt below 30 degrees.
+  Set `env.commands.base_velocity.require_settled_completion=true` only for a dedicated stopping experiment.
+- Both experiments use fixed PPO LR `1e-5` and student encoder LR `1e-4`.
+  Symmetry starts at `0.05 / 200` and reaches `0.05` over 200 updates.
+  This is an initial experimental weight, not a demonstrated optimum.
+
+The examples below require the local `model_219000.pt` training checkpoint. Training logs and full training checkpoints under `logs/` are excluded from Git; exported deployment policies are available under `deploy/pre_train/a2/`.
+
+Start both experiments from the same 219k checkpoint and seed. `--warm_start`
+loads model weights only, preserving fresh optimizers, curriculum and ramp clocks.
+`--resume` continues a saved experiment, including those states; the flags are
+mutually exclusive. Run one training job at a time on a shared GPU and choose
+`--num_envs` for available memory.
+
+```bash
+conda activate go2_rl_robotlab
+python scripts/rsl_rl/train.py --headless --task RobotLab-A2-Stairs-v0 \
+  --num_envs 256 --max_iterations 200 --seed 42 --run_name pilot_control \
+  --warm_start logs/rsl_rl/a2_moe_cts/2026-09-04_09-44-01/model_219000.pt
+python scripts/rsl_rl/train.py --headless --task RobotLab-A2-Stairs-Sym-v0 \
+  --num_envs 256 --max_iterations 200 --seed 42 --run_name pilot_symmetry \
+  --warm_start logs/rsl_rl/a2_moe_cts/2026-09-04_09-44-01/model_219000.pt
+```
+
+These 200-update runs are integration pilots. They do not establish convergence
+or reliable improvement in gait. Keep environment count, seed and update count
+matched when extending the A/B experiment; the task default is 2,000 updates.
+Compare completed ascents, forward-command velocity error, falls/course exits,
+phase-aligned joint motion, contact duty and roll before choosing a checkpoint.
+The mirror loss alone is not a gait or safety score.
+
+Export a candidate and evaluate it on the same 20 MuJoCo cases (three stair
+speeds × five delay seeds, plus five flat cases). Use a separate output directory
+for every policy. Evaluation seeds change motor delay, not the complete range of
+training domain randomization.
+
+```bash
+python scripts/a2_stairs/export_checkpoint.py --checkpoint logs/rsl_rl/EXPERIMENT/RUN/model_199.pt
+python scripts/a2_stairs/evaluate_mujoco.py \
+  --policy logs/rsl_rl/EXPERIMENT/RUN/exported/model_199.pt \
+  --output outputs/a2_stairs_candidate --workers 2
+```
+
+Compare all three evaluation directories with `scripts/a2_stairs/compare_runs.py`.
+It writes JSON plus a text table, using equal weight per evaluation run and paired
+actuator-delay seeds. `scripts/a2_stairs/measure_mirror_residual.py` can additionally
+compare exported policies against the same recorded observations; that open-loop
+mirror error does not replace the physical rollout metrics.
+
+To continue a stair run, use the same environment count, curriculum mode and
+completion criterion. For example, `--resume --load_run RUN --checkpoint model_199.pt`
+with the matching task loads optimizer, curriculum and mirror-ramp states.
+`--max_iterations` specifies additional updates for that resumed invocation.
+Use `--warm_start` when intentionally starting a new experiment with changed settings.
+
+For the unchanged 219k baseline, omit `--policy`. CPU regression checks:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest source/rsl_rl/tests tests/test_a2_stair_task.py scripts/a2_stairs/test_evaluate_mujoco.py -q
+```

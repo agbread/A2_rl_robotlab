@@ -59,7 +59,12 @@ class OnPolicyRunnerCTS:
 
         # Create the algorithm
         self.alg = self._construct_algorithm(obs)
-        
+        # Expose the actual assignment for task-specific teacher/student metrics.
+        task_env = getattr(self.env, "unwrapped", self.env)
+        task_env.teacher_env_mask = torch.zeros(self.env.num_envs, dtype=torch.bool, device=self.env.device)
+        task_env.teacher_env_mask[self.alg.teacher_env_idxs.to(self.env.device)] = True
+        task_env.student_env_mask = ~task_env.teacher_env_mask
+
         # Create the logger
         self.logger = LoggerCTS(
             log_dir=log_dir,
@@ -176,6 +181,12 @@ class OnPolicyRunnerCTS:
         env = getattr(self.env, "unwrapped", self.env)
         if hasattr(env, "common_step_counter"):
             saved_dict["env_step_counter"] = env.common_step_counter
+        if hasattr(self.alg, "finetune_step"):
+            saved_dict["finetune_step"] = int(self.alg.finetune_step)
+        if hasattr(self, "initial_checkpoint"):
+            saved_dict["initial_checkpoint"] = self.initial_checkpoint
+        if hasattr(env, "get_training_state"):
+            saved_dict["env_training_state"] = env.get_training_state()
         # Save RND model if used
         if self.alg_cfg["rnd_cfg"]:
             saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
@@ -260,6 +271,23 @@ class OnPolicyRunnerCTS:
                 print("Sleeping for 1 minute before checking RoboGauge results again...")
                 time.sleep(60)  # wait for 1 minute before checking again
 
+    def load_weights(self, path: str, map_location: str | None = None) -> dict | None:
+        """Initialize a new experiment without restoring optimizers or clocks.
+
+        Use ``load`` to continue the same experiment. In contrast this method
+        retains the newly configured learning rates, curriculum and mirror ramp.
+        """
+        loaded_dict = torch.load(path, weights_only=False, map_location=map_location or self.device)
+        self.alg.policy.load_state_dict(loaded_dict["model_state_dict"], strict=True)
+        if self.alg_cfg["rnd_cfg"] and "rnd_state_dict" in loaded_dict:
+            self.alg.rnd.load_state_dict(loaded_dict["rnd_state_dict"])
+        self.initial_checkpoint = {
+            "path": os.path.abspath(path),
+            "iteration": loaded_dict.get("iter"),
+            "mode": "weights_only",
+        }
+        return loaded_dict.get("infos")
+
     def load(self, path: str, load_optimizer: bool = True, map_location: str | None = None) -> dict:
         loaded_dict = torch.load(path, weights_only=False, map_location=map_location)
         # Load model
@@ -277,6 +305,10 @@ class OnPolicyRunnerCTS:
             # RND optimizer if used
             if self.alg_cfg["rnd_cfg"]:
                 self.alg.rnd_optimizer.load_state_dict(loaded_dict["rnd_optimizer_state_dict"])
+        if resumed_training and hasattr(self.alg, "finetune_step"):
+            self.alg.finetune_step = int(loaded_dict.get("finetune_step", 0))
+        if "initial_checkpoint" in loaded_dict:
+            self.initial_checkpoint = loaded_dict["initial_checkpoint"]
         # Load current learning iteration
         if resumed_training:
             self.current_learning_iteration = loaded_dict["iter"] + 1
@@ -289,7 +321,9 @@ class OnPolicyRunnerCTS:
                     env.restore_training_progress(step_count)
                 else:
                     env.common_step_counter = step_count
-        return loaded_dict["infos"]
+            if "env_training_state" in loaded_dict and hasattr(env, "set_training_state"):
+                env.set_training_state(loaded_dict["env_training_state"])
+        return loaded_dict.get("infos")
 
     def get_inference_policy(self, device: str | None = None) -> callable:
         self.eval_mode()  # Switch to evaluation mode (e.g. for dropout)

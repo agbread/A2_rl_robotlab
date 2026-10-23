@@ -37,6 +37,10 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--warm_start", type=str, default=None,
+    help="CTS checkpoint path: initialize model weights with fresh optimizers and curriculum clocks.",
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
@@ -45,6 +49,12 @@ cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
+if args_cli.warm_start:
+    if args_cli.resume:
+        parser.error("--warm_start and --resume are mutually exclusive")
+    args_cli.warm_start = os.path.abspath(os.path.expanduser(args_cli.warm_start))
+    if not os.path.isfile(args_cli.warm_start):
+        parser.error(f"Warm-start checkpoint does not exist: {args_cli.warm_start}")
 
 # always enable cameras to record video
 if args_cli.video:
@@ -117,6 +127,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     agent_cfg.max_iterations = (
         args_cli.max_iterations if args_cli.max_iterations is not None else agent_cfg.max_iterations
     )
+
+    if args_cli.warm_start and agent_cfg.class_name != "OnPolicyRunnerCTS":
+        raise ValueError("--warm_start is currently supported by OnPolicyRunnerCTS only.")
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
@@ -211,12 +224,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         # load previously trained model
         runner.load(resume_path)
 
+    if args_cli.warm_start:
+        print(f"[INFO]: Initializing model weights from: {args_cli.warm_start}")
+        runner.load_weights(args_cli.warm_start)
+        dump_yaml(os.path.join(log_dir, "params", "initialization.yaml"), runner.initial_checkpoint)
+
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)
     dump_yaml(os.path.join(log_dir, "params", "agent.yaml"), agent_cfg)
     sys.stdout = Logger(os.path.join(log_dir, "train.log"))
     # run training
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    runner.learn(
+        num_learning_iterations=agent_cfg.max_iterations,
+        init_at_random_ep_len=getattr(agent_cfg, "init_at_random_ep_len", True),
+    )
 
     # close the simulator
     env.close()

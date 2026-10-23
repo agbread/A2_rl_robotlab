@@ -11,10 +11,12 @@ import torch.optim as optim
 from itertools import chain
 from tensordict import TensorDict
 import itertools
+import math
 
 from rsl_rl.modules import ActorCriticMoECTS
 from rsl_rl.modules.rnd import RandomNetworkDistillation
 from rsl_rl.storage import RolloutStorageCTS
+from rsl_rl.utils import resolve_callable
 
 
 class MoECTS:
@@ -83,10 +85,26 @@ class MoECTS:
             self.rnd = None
             self.rnd_optimizer = None
 
-        # Symmetry components
-        if symmetry_cfg is not None:
-            print("[WARNING] `symmetry_cfg` detected, but MoECTS does not currently support symmetry; the configuration will be ignored.")
+        # Mirror consistency is opt-in and operates on the deployed student mean.
+        # Unlike PPO augmentation, the callback returns ONLY the reflected batch.
         self.symmetry = None
+        self.finetune_step = 0
+        if symmetry_cfg is not None:
+            if symmetry_cfg.get("use_data_augmentation", False):
+                raise NotImplementedError("MoECTS supports mirror loss only, not PPO data augmentation.")
+            if symmetry_cfg.get("use_mirror_loss", False):
+                if self.is_multi_gpu:
+                    raise NotImplementedError("MoECTS mirror loss currently supports single-GPU training only.")
+                self.symmetry = dict(symmetry_cfg)
+                coefficient = float(self.symmetry["mirror_loss_coeff"])
+                if not math.isfinite(coefficient) or coefficient < 0.0:
+                    raise ValueError("mirror_loss_coeff must be finite and non-negative.")
+                ramp_updates = self.symmetry.get("ramp_updates", 0)
+                if isinstance(ramp_updates, bool) or not isinstance(ramp_updates, int) or ramp_updates < 0:
+                    raise ValueError("ramp_updates must be a non-negative integer.")
+                self.symmetry["mirror_loss_coeff"] = coefficient
+                self.symmetry["ramp_updates"] = ramp_updates
+                self.symmetry["data_augmentation_func"] = resolve_callable(self.symmetry["data_augmentation_func"])
 
         # PPO components
         self.policy = policy
@@ -238,6 +256,9 @@ class MoECTS:
         mean_entropy = 0
         mean_latent_loss = 0
         mean_load_balance_loss = 0
+        mean_actor_mirror_loss = 0.0
+        mean_student_mirror_loss = 0.0
+        mirror_coefficient = self._mirror_loss_coefficient()
         # RND loss
         mean_rnd_loss = 0 if self.rnd else None
 
@@ -340,6 +361,11 @@ class MoECTS:
                 value_loss = (returns_batch - value_batch).pow(2).mean()
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
+            if self.symmetry is not None:
+                # Separate graph: PPO never updates the student encoder.
+                actor_mirror_loss = self._mirror_consistency_loss(obs_batch[teacher_samples:], train_actor=True)
+                loss = loss + mirror_coefficient * actor_mirror_loss
+                mean_actor_mirror_loss += actor_mirror_loss.item()
 
             # RND loss
             # TODO: Move this processing to inside RND module.
@@ -412,6 +438,12 @@ class MoECTS:
             load_balance_loss = torch.mean((mean_usage - target_usage).pow(2))
             # load_balance_loss = torch.sum(mean_usage.pow(2)) * gating_weights.shape[1]  # Switch Transformer style
             student_loss = latent_loss + self.load_balance_coef * load_balance_loss
+            if self.symmetry is not None:
+                # Detached actor weights preserve gradients with respect to its
+                # input, so this pass updates ONLY the student encoder.
+                student_mirror_loss = self._mirror_consistency_loss(obs_batch[teacher_samples:], train_actor=False)
+                student_loss = student_loss + mirror_coefficient * student_mirror_loss
+                mean_student_mirror_loss += student_mirror_loss.item()
             
             self.optimizer_stu_enc.zero_grad()
             student_loss.backward()
@@ -444,8 +476,71 @@ class MoECTS:
         }
         if self.rnd:
             loss_dict["rnd"] = mean_rnd_loss
+        if self.symmetry is not None:
+            loss_dict["mirror_actor"] = mean_actor_mirror_loss / num_updates
+            loss_dict["mirror_student"] = mean_student_mirror_loss / num_updates
+            loss_dict["mirror_coefficient"] = mirror_coefficient
+        self.finetune_step += 1
 
         return loss_dict
+
+    def _mirror_loss_coefficient(self) -> float:
+        """Ramp on new fine-tuning updates, independently of checkpoint iteration.
+
+        ``finetune_step`` counts completed updates and must be saved/restored by
+        the runner for a resumed fine-tuning experiment. A weight-only start
+        leaves it at zero. With a ramp of N, updates 1..N use 1/N..1 of the weight.
+        """
+        if self.symmetry is None:
+            return 0.0
+        ramp = self.symmetry["ramp_updates"]
+        scale = min((self.finetune_step + 1) / ramp, 1.0) if ramp else 1.0
+        return self.symmetry["mirror_loss_coeff"] * scale
+
+    def _student_mean_for_mirror(self, obs: TensorDict, *, train_actor: bool) -> torch.Tensor:
+        """Compute a deterministic student mean with one optimizer's gradient path.
+
+        Reflection happens before this method, hence before normalization. This
+        forward does not sample actions or change the PPO distribution object.
+        """
+        actor_obs = self.policy.actor_obs_normalizer(self.policy.get_actor_obs(obs))
+        single_obs = self.policy.single_obs_normalizer(obs["single_obs"])
+        if train_actor:
+            with torch.no_grad():
+                latent, _ = self.policy.student_moe_encoder(actor_obs)
+        else:
+            latent, _ = self.policy.student_moe_encoder(actor_obs)
+        actor_input = torch.cat([latent, single_obs], dim=-1)
+        if train_actor:
+            mean = self.policy.actor(actor_input)
+        else:
+            # Freezing the entire forward with no_grad would cut the encoder's
+            # gradient. functional_call instead treats actor weights as constants.
+            parameters = {name: parameter.detach() for name, parameter in self.policy.actor.named_parameters()}
+            mean = torch.func.functional_call(self.policy.actor, parameters, (actor_input,))
+        return mean[..., 0, :] if self.policy.state_dependent_std else mean
+
+    def _mirror_consistency_loss(self, obs: TensorDict, *, train_actor: bool) -> torch.Tensor:
+        """Bidirectional stopped-target consistency on student rollout observations.
+
+        The reflector must preserve batch size and return (mirrored_obs, actions)
+        for observation calls and (obs, mirrored_actions) for action calls. It must
+        not concatenate original samples or mirror privileged critic observations.
+        """
+        reflect = self.symmetry["data_augmentation_func"]
+        mirrored_obs, _ = reflect(obs=obs, actions=None, env=self.symmetry.get("_env"))
+        if mirrored_obs.batch_size != obs.batch_size:
+            raise ValueError("MoECTS mirror callback must return one reflected batch, without concatenating originals.")
+        mean = self._student_mean_for_mirror(obs, train_actor=train_actor)
+        mirrored_mean = self._student_mean_for_mirror(mirrored_obs, train_actor=train_actor)
+        _, reflected_mean = reflect(obs=None, actions=mean.detach(), env=self.symmetry.get("_env"))
+        _, reflected_mirrored_mean = reflect(obs=None, actions=mirrored_mean.detach(), env=self.symmetry.get("_env"))
+        if reflected_mean.shape != mean.shape or reflected_mirrored_mean.shape != mean.shape:
+            raise ValueError("MoECTS mirror callback must preserve action shape.")
+        return 0.5 * (
+            (mirrored_mean - reflected_mean).square().mean()
+            + (mean - reflected_mirrored_mean).square().mean()
+        )
 
     def broadcast_parameters(self) -> None:
         """Broadcast model parameters to all GPUs."""
