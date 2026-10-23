@@ -308,7 +308,7 @@ The course width is 3 m. Training and MuJoCo evaluation share
   Symmetry starts at `0.05 / 200` and reaches `0.05` over 200 updates.
   This is an initial experimental weight, not a demonstrated optimum.
 
-The examples below require the local `model_219000.pt` training checkpoint. Training logs and full training checkpoints under `logs/` are excluded from Git; exported deployment policies are available under `deploy/pre_train/a2/`.
+The baseline A/B examples below require the local `model_219000.pt` training checkpoint. Training logs under `logs/` are excluded from Git. The latest evaluated A2 candidate includes its full training checkpoint and deployment policy under [`deploy/pre_train/a2/stairs_symmetry_200/`](deploy/pre_train/a2/stairs_symmetry_200/); see [Latest evaluated A2 model](#latest-evaluated-a2-model).
 
 Start both experiments from the same 219k checkpoint and seed. `--warm_start`
 loads model weights only, preserving fresh optimizers, curriculum and ramp clocks.
@@ -361,4 +361,55 @@ For the unchanged 219k baseline, omit `--policy`. CPU regression checks:
 
 ```bash
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest source/rsl_rl/tests tests/test_a2_stair_task.py scripts/a2_stairs/test_evaluate_mujoco.py -q
+```
+
+### Latest evaluated A2 model
+
+[`deploy/pre_train/a2/stairs_symmetry_200/`](deploy/pre_train/a2/stairs_symmetry_200/)
+contains one model in two formats:
+
+- `model_199.pt`: full training checkpoint after 200 symmetry fine-tuning updates
+  from the 219k baseline (iteration numbers start at zero), including optimizer
+  and curriculum states.
+- `policy.pt`: the same model's student policy exported as TorchScript for MuJoCo.
+- `params/agent.yaml`, `params/env.yaml`, and `metadata.json`: architecture,
+  training configuration snapshots, provenance, evaluation summary, and SHA-256
+  file hashes. Machine-specific paths in the environment snapshot and checkpoint
+  provenance are made repository-relative; model weights and training states
+  are unchanged. Registered task configuration resolves paths for new runs.
+
+This is the latest completed training run with the full 20-case MuJoCo evaluation.
+The subsequent `model_200.pt` was created only to test one update of checkpoint
+resumption and is not packaged. Intermediate checkpoints and training logs are
+not included.
+
+The candidate completed all 15 stair ascents, with 12/15 settled completions.
+It remains an experimental 200-update pilot: several symmetry metrics improved,
+but flat lateral drift and 0.5 m/s settled completion regressed relative to the
+219k baseline. The baseline remains the default deployment policy.
+
+Evaluate the packaged candidate on the exact 12-step course and flat cases:
+
+```bash
+python scripts/a2_stairs/evaluate_mujoco.py \
+  --policy deploy/pre_train/a2/stairs_symmetry_200/policy.pt \
+  --output outputs/a2_stairs_symmetry_200 --workers 2
+```
+
+Start a new fine-tuning experiment from its weights with fresh optimizer and
+curriculum states:
+
+```bash
+python scripts/rsl_rl/train.py --headless --task RobotLab-A2-Stairs-Sym-v0 \
+  --num_envs 256 --max_iterations 2000 --seed 42 --run_name symmetry_followup \
+  --warm_start deploy/pre_train/a2/stairs_symmetry_200/model_199.pt
+```
+
+To recreate the TorchScript policy from the packaged checkpoint and adjacent
+agent configuration:
+
+```bash
+python scripts/a2_stairs/export_checkpoint.py \
+  --checkpoint deploy/pre_train/a2/stairs_symmetry_200/model_199.pt \
+  --output outputs/a2_stairs_symmetry_200_reexport/policy.pt
 ```
