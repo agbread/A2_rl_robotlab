@@ -1,14 +1,25 @@
-# Recorded preparation environment, NOT a claim of a fresh-install/GPU smoke test.
-# Install torch/torchvision from the CUDA 12.8 PyTorch index; Isaac from NVIDIA.
+# ISAAC ENVIRONMENT ONLY. Do not install MuJoCo or use isaaclab[all] here.
+# Install torch/torchvision from the CUDA 12.8 index; Isaac from NVIDIA.
+# No standalone wheel pin: current wheel needs packaging>=24, but Isaac pins 23.
+# Keep wheel out of the runtime environment; editable builds use build isolation.
 isaaclab==2.3.2.post1
 isaacsim==5.1.0.0
+isaacsim-core==5.1.0.0
+isaacsim-kernel==5.1.0.0
 torch==2.7.0+cu128
 torchvision==0.22.0+cu128
 tensordict==0.14.3
 rsl-rl-lib==3.3.0
-mujoco==3.17.0
 numpy==1.26.0
 h5py==3.16.0
 imageio==2.37.0
-imageio-ffmpeg==0.6.0
 pytest==9.1.1
+click==8.1.7
+typing-extensions==4.12.2
+websockets==12.0
+wrapt==1.16.0
+packaging==23.0
+# robot_lab's optional alternative RL/logging dependencies must also satisfy
+# Isaac's pins. CTS uses the local rsl_rl implementation and TensorBoard.
+cusrl==1.1.0
+wandb==0.19.11

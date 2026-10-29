@@ -18,6 +18,7 @@ import math
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 os.environ.setdefault("MUJOCO_GL", "egl")
 import imageio.v2 as imageio
@@ -26,6 +27,9 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from evaluate_mujoco import ROOT, SCENE, sha256, validate_scene
+
+sys.path.insert(0, str(ROOT / "scripts/a2_gait"))
+from video_assets import find_video_font
 
 
 def scene_for_terrain(terrain):
@@ -186,7 +190,7 @@ def main():
     camera.distance, camera.azimuth, camera.elevation = 3.8, 60, -30
     if terrain == "flat":
         camera.distance = 2.8
-    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    font_path = find_video_font()
     fonts = (ImageFont.truetype(font_path, 29), ImageFont.truetype(font_path, 22))
     with mujoco.Renderer(model, height=args.height, width=args.width) as renderer:
         videos = [render_case(result, args.evaluation, args.output, model, renderer, camera, fonts, args) for result in results]

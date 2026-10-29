@@ -323,7 +323,9 @@ def test_completed_evaluation_cache_does_not_reuse_partial_outputs(tmp_path, mon
 def test_static_checks_do_not_import_isaac_or_query_cuda(monkeypatch):
     monkeypatch.setattr(torch.cuda, "init", lambda: pytest.fail("CUDA initialized"))
     monkeypatch.setattr(torch.cuda, "is_available", lambda: pytest.fail("CUDA queried"))
-    report = manage.static_checks()
+    monkeypatch.setattr(manage, "probe_runtime", lambda python, role: dict(
+        ok=True, errors=[], prefix=f"/separate/{role}", role=role, pip_check={"returncode": 0}))
+    report = manage.static_checks("/separate/mujoco/bin/python")
     assert report["ok"], report["errors"]
     assert not report["gpu_tested"]
     assert "isaaclab.app" not in sys.modules

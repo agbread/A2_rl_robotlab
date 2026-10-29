@@ -4,10 +4,13 @@ import sys
 
 from common import ROOT, SPEEDS, PROTOCOL, read_json, write_json, digest
 from processes import gpu_environment, run_jobs
+from runtimes import python_environment, python_path
 
 
-def command_job(argv, output, gpu):
-    return dict(argv=[sys.executable, *map(str, argv)], cwd=str(ROOT), env=gpu_environment(gpu),
+def command_job(argv, output, gpu, python=None):
+    python = python_path(python or sys.executable)
+    return dict(argv=[python, *map(str, argv)], cwd=str(ROOT),
+                env=python_environment(python, gpu_environment(gpu)),
                 log=str(output))
 
 
@@ -53,7 +56,9 @@ def mujoco_rows(folder):
     return rows
 
 
-def suite(checkpoint, output, gpu, deadline, split="validation", quick=False):
+def suite(checkpoint, output, gpu, deadline, split="validation", quick=False, mujoco_python=None):
+    if not quick and not mujoco_python:
+        raise ValueError("Full evaluation requires a separate MuJoCo Python")
     output, checkpoint = Path(output), Path(checkpoint).resolve()
     output.mkdir(parents=True, exist_ok=False)
     rows = []
@@ -74,15 +79,16 @@ def suite(checkpoint, output, gpu, deadline, split="validation", quick=False):
                     "--output", folder, "--terrains", terrain, "--speeds", *SPEEDS,
                     "--flat-speeds", *SPEEDS, "--seeds", *PROTOCOL[f"{split}_seeds"],
                     "--duration", 30, "--workers", 2]
-            run_jobs([command_job(argv, output / f"mujoco_{terrain}.log", gpu)], deadline)
+            run_jobs([command_job(argv, output / f"mujoco_{terrain}.log", gpu, python=mujoco_python)], deadline)
             rows.extend(mujoco_rows(folder))
     report = dict(directory=str(output), checkpoint=str(checkpoint), checkpoint_sha256=digest(checkpoint), split=split,
-                  quick=quick, protocol=PROTOCOL, rows=rows)
+                  quick=quick, protocol=PROTOCOL, rows=rows,
+                  mujoco_python=python_path(mujoco_python) if mujoco_python else None)
     write_json(output / "metrics.json", report)
     return report
 
 
-def cached_suite(checkpoint, cache, gpu, deadline, split="validation"):
+def cached_suite(checkpoint, cache, gpu, deadline, split="validation", mujoco_python=None):
     """Cache only completed reports; interrupted directories remain recoverable."""
     import time
     cache = Path(cache)
@@ -90,15 +96,19 @@ def cached_suite(checkpoint, cache, gpu, deadline, split="validation"):
         report = read_json(cache)
         if report["checkpoint_sha256"] != digest(checkpoint) or report["protocol"] != PROTOCOL or report["split"] != split:
             raise ValueError("Cached evaluation provenance differs")
+        if report.get("mujoco_python") != (python_path(mujoco_python) if mujoco_python else None):
+            raise ValueError("Cached MuJoCo interpreter differs")
         return report
     output = cache.parent / f"{cache.stem}_{time.time_ns()}"
-    report = suite(checkpoint, output, gpu, deadline, split=split)
+    report = suite(checkpoint, output, gpu, deadline, split=split, mujoco_python=mujoco_python)
     write_json(cache, report)
     return report
 
 
-def render(checkpoint, output, gpu, deadline):
+def render(checkpoint, output, gpu, deadline, mujoco_python=None):
     """A fresh single-seed four-speed run per terrain; no state interpolation."""
+    if not mujoco_python:
+        raise ValueError("Rendering requires a separate MuJoCo Python")
     output = Path(output)
     output.mkdir(parents=True, exist_ok=False)
     policy = output / "exported/policy.pt"
@@ -109,7 +119,8 @@ def render(checkpoint, output, gpu, deadline):
         run_jobs([command_job([ROOT / "scripts/a2_stairs/evaluate_mujoco.py", "--policy", policy,
                               "--output", evaluation, "--terrains", terrain, "--speeds", *SPEEDS,
                               "--flat-speeds", *SPEEDS, "--seeds", 42, "--duration", 30],
-                             output / f"{terrain}_evaluation.log", gpu)], deadline)
+                             output / f"{terrain}_evaluation.log", gpu, python=mujoco_python)], deadline)
         run_jobs([command_job([ROOT / "scripts/a2_stairs/render_mujoco_evaluation.py",
                               "--evaluation", evaluation, "--output", output / terrain / "videos",
-                              "--checkpoint", checkpoint], output / f"{terrain}_render.log", gpu)], deadline)
+                              "--checkpoint", checkpoint], output / f"{terrain}_render.log", gpu,
+                             python=mujoco_python)], deadline)

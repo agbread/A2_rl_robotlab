@@ -1,0 +1,10 @@
+# Run pip from the repository root, inside a fresh Python 3.11 Isaac environment.
+# First install torch==2.7.0 and torchvision==0.22.0 from the cu128 index.
+# Supply --extra-index-url https://pypi.nvidia.com to pip for this file.
+-c constraints.txt
+isaaclab[isaacsim]==2.3.2.post1
+-e ./source/rsl_rl
+-e ./source/robot_lab
+tensordict==0.14.3
+h5py==3.16.0
+pytest==9.1.1

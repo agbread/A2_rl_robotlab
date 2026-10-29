@@ -1,0 +1,9 @@
+# MUJOCO ENVIRONMENT ONLY. TorchScript CPU inference; no Isaac/RobotLab install.
+# Install torch==2.7.0 from https://download.pytorch.org/whl/cpu first.
+torch==2.7.0+cpu
+mujoco==3.17.0
+numpy==1.26.0
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
+websockets>=13
+pygame==2.6.1

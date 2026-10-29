@@ -1,0 +1,10 @@
+-c constraints-mujoco.txt
+torch==2.7.0+cpu
+mujoco==3.17.0
+numpy==1.26.0
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
+pygame==2.6.1
+scipy
+pillow
+pyyaml

@@ -8,30 +8,23 @@ Examples:
 from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import importlib.metadata
-import importlib.util
 import json
 import os
 from pathlib import Path
-import platform
-import shutil
 import subprocess
 import sys
 import time
 
 from common import (ROOT, BASE, PROTOCOL, digest, fingerprint, read_json, write_json,
                     new_state, recipe, advance, select_capacity, full_evaluation_due)
-from evaluation import command_job, worker_job, suite, cached_suite, render
+from evaluation import worker_job, suite, cached_suite, render
 from processes import exclusive_lock, run_jobs, CANCELLED
-
-EXPECTED = {"isaaclab": "2.3.2.post1", "isaacsim": "5.1.0.0", "torch": "2.7.0+cu128",
-            "torchvision": "0.22.0+cu128", "rsl-rl-lib": "3.3.0", "tensordict": "0.14.3",
-            "mujoco": "3.17.0", "numpy": "1.26.0", "h5py": "3.16.0",
-            "imageio": "2.37.0", "imageio-ffmpeg": "0.6.0"}
+from runtimes import probe_runtime, runtime_paths
 
 
 def source_hash():
     files = sorted((ROOT / "scripts/a2_gait").glob("*.py"))
+    files.extend(sorted((ROOT / "scripts/a2_gait").glob("*.txt")))
     for directory in (ROOT / "source/robot_lab/robot_lab/tasks/a2", ROOT / "source/rsl_rl/rsl_rl"):
         files.extend(sorted(directory.rglob("*.py")))
     files.extend(ROOT / "scripts/a2_stairs" / name for name in (
@@ -39,30 +32,13 @@ def source_hash():
     return fingerprint({str(p.relative_to(ROOT)): digest(p) for p in files})
 
 
-def static_checks():
-    errors, versions = [], {}
-    if sys.version_info[:2] != (3, 11):
-        errors.append("Use Python 3.11 for the recorded environment")
-    if platform.system() != "Linux":
-        errors.append("The process manager targets Ubuntu/Linux")
-    for name, expected in EXPECTED.items():
-        try:
-            versions[name] = importlib.metadata.version(name)
-        except importlib.metadata.PackageNotFoundError:
-            versions[name] = None
-        if versions[name] != expected:
-            errors.append(f"{name}: expected {expected}, found {versions[name]}")
-    for name, relative in (("rsl_rl", "source/rsl_rl/rsl_rl"), ("robot_lab", "source/robot_lab/robot_lab")):
-        spec = importlib.util.find_spec(name)  # root lookup only; does not import Isaac
-        if spec is None or Path(spec.origin).resolve().parent != (ROOT / relative).resolve():
-            errors.append(f"Install this checkout's {name} in editable mode, not another checkout")
-    for name in ("psutil", "pygame", "scipy", "PIL", "yaml"):
-        if importlib.util.find_spec(name) is None:
-            errors.append(f"Missing dependency: {name}")
-    if shutil.which("ffmpeg") is None:
-        errors.append("Install ffmpeg for four-speed comparison videos")
-    if not Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf").is_file():
-        errors.append("Install fonts-dejavu-core for the video overlay")
+def static_checks(mujoco_python=None):
+    paths = runtime_paths(mujoco_python)
+    reports = {role: probe_runtime(paths[f"{role}_python"], role) for role in ("isaac", "mujoco")}
+    errors = [f"{role}: {message}" for role, report in reports.items() for message in report["errors"]]
+    if all(report.get("prefix") for report in reports.values()):
+        if Path(reports["isaac"]["prefix"]).resolve() == Path(reports["mujoco"]["prefix"]).resolve():
+            errors.append("Isaac and MuJoCo must use different Python environments")
     metadata_file = BASE.parent / "metadata.json"
     if not metadata_file.exists():
         errors.append("Bundled checkpoint manifest is missing")
@@ -75,9 +51,9 @@ def static_checks():
                  "resources/a2_description/flat.xml", "resources/a2_description/stairs_12.xml"):
         if not (ROOT / path).is_file():
             errors.append(f"Missing asset: {path}")
-    return dict(ok=not errors, errors=errors, versions=versions, source_hash=source_hash(),
+    return dict(ok=not errors, errors=errors, runtimes=paths, environments=reports, source_hash=source_hash(),
                 protocol_hash=fingerprint(PROTOCOL), gpu_tested=False,
-                note="Metadata/hash checks only: CUDA and Isaac Sim have NOT been initialized")
+                note="CPU metadata/hash checks and pip check in both interpreters; no CUDA or simulator initialization")
 
 
 def hardware():
@@ -92,7 +68,7 @@ def hardware():
     return dict(gpus=devices, ram_free_gib=psutil.virtual_memory().available/2**30)
 
 
-def ensure_experiment(folder, gpus, branches):
+def ensure_experiment(folder, gpus, branches, runtimes=None, runtime_fingerprints=None):
     path = folder / "experiment.json"
     if path.exists():
         data = read_json(path)
@@ -102,19 +78,22 @@ def ensure_experiment(folder, gpus, branches):
             raise ValueError("Baseline checkpoint changed")
         if data["gpus"] != gpus or data["branches"] != branches:
             raise ValueError("Experiment GPU assignment/branches differ")
+        if data.get("runtimes") != runtimes or data.get("runtime_fingerprints") != runtime_fingerprints:
+            raise ValueError("Experiment Python paths/dependencies changed; do not silently resume another environment")
         return data
     now = time.time()
     data = dict(version=1, created_at=now, training_deadline=now+144*3600, deadline=now+168*3600,
                 gpus=gpus, branches=branches, source_hash=source_hash(), protocol_hash=fingerprint(PROTOCOL),
-                baseline_sha256=digest(BASE), protocol=PROTOCOL, status="prepared")
+                baseline_sha256=digest(BASE), protocol=PROTOCOL, status="prepared", runtimes=runtimes,
+                runtime_fingerprints=runtime_fingerprints)
     write_json(path, data)
     return data
 
 
-def gpu_preflight(folder, experiment):
+def gpu_preflight(folder, experiment, report=None):
     if os.environ.get("CUDA_VISIBLE_DEVICES"):
         raise ValueError("Use physical GPU IDs: unset CUDA_VISIBLE_DEVICES before this manager (do not override scheduler allocations)")
-    report = static_checks()
+    report = report or static_checks(experiment["runtimes"]["mujoco_python"])
     if not report["ok"]:
         raise RuntimeError(json.dumps(report, indent=2))
     machine = hardware()
@@ -225,9 +204,11 @@ def branch_loop(root, branch, gpu, experiment, num_envs):
                 write_json(path, state)
             if full_evaluation_due(state, time.time()):
                 reference = cached_suite(BASE, folder / "baseline_validation_metrics.json", gpu,
-                                         experiment["training_deadline"])
+                                         experiment["training_deadline"],
+                                         mujoco_python=experiment["runtimes"]["mujoco_python"])
                 candidate_dir = folder / "evaluations" / f"full_{time.time_ns()}"
-                candidate = suite(state["checkpoint"], candidate_dir, gpu, experiment["training_deadline"])
+                candidate = suite(state["checkpoint"], candidate_dir, gpu, experiment["training_deadline"],
+                                  mujoco_python=experiment["runtimes"]["mujoco_python"])
                 decision = acceptance(reference["rows"], candidate["rows"])
                 state["candidates"].append(dict(checkpoint=state["checkpoint"], evaluation=str(candidate_dir),
                                                  updates=state["updates"], seed=state["seed"], **decision))
@@ -263,13 +244,15 @@ def final_evaluation(root, experiment):
         if not candidates or time.time() >= experiment["deadline"]:
             continue
         try:
-            reference = cached_suite(BASE, reference_cache, gpu, experiment["deadline"], split="final")
+            reference = cached_suite(BASE, reference_cache, gpu, experiment["deadline"], split="final",
+                                     mujoco_python=experiment["runtimes"]["mujoco_python"])
         except TimeoutError:
             break
         for candidate in candidates[:3]:
             try:
                 directory = root / "final" / branch / f"candidate_{time.time_ns()}"
-                result = suite(candidate["checkpoint"], directory, gpu, experiment["deadline"], split="final")
+                result = suite(candidate["checkpoint"], directory, gpu, experiment["deadline"], split="final",
+                               mujoco_python=experiment["runtimes"]["mujoco_python"])
                 decisions.append(dict(checkpoint=candidate["checkpoint"], branch=branch,
                                       evaluation=str(directory), **acceptance(reference["rows"], result["rows"])))
                 write_json(root / "final/comparison.json", decisions)
@@ -281,7 +264,8 @@ def final_evaluation(root, experiment):
     write_json(root / "selection.json", selection)
     if passed and time.time() < experiment["deadline"]:
         try:
-            render(passed[0]["checkpoint"], root / f"selected_videos_{time.time_ns()}", experiment["gpus"][0], experiment["deadline"])
+            render(passed[0]["checkpoint"], root / f"selected_videos_{time.time_ns()}", experiment["gpus"][0], experiment["deadline"],
+                   mujoco_python=experiment["runtimes"]["mujoco_python"])
             selection["render_status"] = "completed"
         except TimeoutError:
             selection["render_status"] = "budget_expired_incomplete_videos"
@@ -319,6 +303,8 @@ def parser():
     p.add_argument("--run-dir", type=Path, default=ROOT / "outputs/a2_gait_remote")
     p.add_argument("--branch", choices=("warm", "scratch", "both"), default="both")
     p.add_argument("--gpus", nargs=2, type=int, default=[0, 1])
+    p.add_argument("--mujoco-python", type=Path,
+                   help="Separate MuJoCo environment's bin/python (or A2_MUJOCO_PYTHON); saved for resume")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--static", action="store_true")
     mode.add_argument("--gpu", action="store_true")
@@ -335,6 +321,10 @@ def main(argv=None):
         raise ValueError("Specify two distinct nonnegative physical GPU indices")
     branches = ["warm", "scratch"] if args.branch == "both" else [args.branch]
     folder = args.run_dir.resolve()
+    saved = read_json(folder / "experiment.json") if (folder / "experiment.json").exists() else {}
+    mujoco_python = (args.mujoco_python or os.environ.get("A2_MUJOCO_PYTHON")
+                    or (saved.get("runtimes") or {}).get("mujoco_python"))
+    paths = runtime_paths(mujoco_python)
     if args.command in ("evaluate", "render") and (args.checkpoint is None or args.output is None):
         raise ValueError("evaluate/render require --checkpoint and a fresh --output directory")
     if args.dry_run:
@@ -354,27 +344,36 @@ def main(argv=None):
                          output=str(args.output.resolve()), terrains=["flat", "stairs"], speeds=PROTOCOL["speeds"],
                          seeds=PROTOCOL[f"{args.split}_seeds"] if args.command == "evaluate" else [42])]
         print(json.dumps(dict(command=args.command, run_dir=str(folder), gpu_activity=False, jobs=jobs,
+                              runtimes=paths,
+                              execution_python=dict(isaac=paths["isaac_python"], export=paths["isaac_python"],
+                                                    mujoco=paths["mujoco_python"], render=paths["mujoco_python"]),
                               note="Preview only; creates no files or child processes"), indent=2))
         return 0
     if args.command == "preflight" and not args.gpu:
-        report = static_checks()
+        report = static_checks(paths["mujoco_python"])
         print(json.dumps(report, indent=2))
         return 0 if report["ok"] else 1
     if os.environ.get("CUDA_VISIBLE_DEVICES"):
         raise ValueError("Use physical GPU IDs in an unmasked, allocated local session; do not bypass scheduler masks")
+    report = static_checks(paths["mujoco_python"])
+    if not report["ok"]:
+        raise RuntimeError(json.dumps(report, indent=2))
+    runtime_fingerprints = {role: info["package_fingerprint"] for role, info in report["environments"].items()}
     with exclusive_lock(folder / ".manager.lock"):
-        experiment = ensure_experiment(folder, args.gpus, branches)
+        experiment = ensure_experiment(folder, args.gpus, branches, paths, runtime_fingerprints)
         if args.command == "preflight":
-            gpu_preflight(folder, experiment)
+            gpu_preflight(folder, experiment, report)
         elif args.command == "benchmark":
             benchmark(folder, experiment)
         elif args.command in ("train", "resume"):
             train_all(folder, experiment, args.command == "resume")
         else:
             if args.command == "evaluate":
-                suite(args.checkpoint, args.output, args.gpus[0], experiment["deadline"], split=args.split)
+                suite(args.checkpoint, args.output, args.gpus[0], experiment["deadline"], split=args.split,
+                      mujoco_python=paths["mujoco_python"])
             else:
-                render(args.checkpoint, args.output, args.gpus[0], experiment["deadline"])
+                render(args.checkpoint, args.output, args.gpus[0], experiment["deadline"],
+                       mujoco_python=paths["mujoco_python"])
     return 0
 
 
