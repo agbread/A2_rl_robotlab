@@ -43,7 +43,7 @@ gait quality must be validated on the destination PC.**
 ### Download and install on the training PC
 
 ```bash
-git clone --branch a2-gait-training-prep https://github.com/agbread/A2_rl_robotlab.git
+git clone --branch main https://github.com/agbread/A2_rl_robotlab.git
 cd A2_rl_robotlab
 conda create -n a2_rl_robotlab python=3.11
 conda activate a2_rl_robotlab
