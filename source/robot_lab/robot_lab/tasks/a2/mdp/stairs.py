@@ -109,7 +109,8 @@ class StairVelocityCommand(A2RLGymCommand):
                 table[row, col] = [s.num_steps, s.rise, s.tread, s.approach, s.landing, s.width]
         self.spec_table = torch.as_tensor(table, device=self.device)
         self.specs = self.spec_table[terrain.terrain_levels, terrain.terrain_types].clone()
-        expected = dict(target_12=8, stair_curriculum=4, near_low=1, near_high=1, near_narrow=1, near_wide=1, flat=4)
+        expected = getattr(self.cfg, "expected_columns", None) or dict(
+            target_12=8, stair_curriculum=4, near_low=1, near_high=1, near_narrow=1, near_wide=1, flat=4)
         for name, count in expected.items():
             if np.count_nonzero(columns == self.terrain_type2idx[name]) != count:
                 raise ValueError(f"Incorrect terrain column allocation for {name}")

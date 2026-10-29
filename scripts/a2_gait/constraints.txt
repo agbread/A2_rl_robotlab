@@ -1,0 +1,14 @@
+# Recorded preparation environment, NOT a claim of a fresh-install/GPU smoke test.
+# Install torch/torchvision from the CUDA 12.8 PyTorch index; Isaac from NVIDIA.
+isaaclab==2.3.2.post1
+isaacsim==5.1.0.0
+torch==2.7.0+cu128
+torchvision==0.22.0+cu128
+tensordict==0.14.3
+rsl-rl-lib==3.3.0
+mujoco==3.17.0
+numpy==1.26.0
+h5py==3.16.0
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
+pytest==9.1.1

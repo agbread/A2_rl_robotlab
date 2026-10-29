@@ -43,6 +43,16 @@ for task_id, runner_cfg in (
         },
     )
 
+for task_id, env_cfg, runner_cfg in (
+    ("RobotLab-A2-Stairs-Gait-v0", "A2GaitEnvCfg", "GaitWarmRunnerCfg"),
+    ("RobotLab-A2-Gait-Scratch-v0", "A2GaitScratchEnvCfg", "GaitScratchRunnerCfg"),
+):
+    gym.register(
+        id=task_id, entry_point="robot_lab.tasks.a2.gait_env_cfg:A2GaitEnv", disable_env_checker=True,
+        kwargs={"env_cfg_entry_point": f"{__name__}.gait_env_cfg:{env_cfg}",
+                "rsl_rl_cfg_entry_point": f"{__name__}.rsl_rl_cfg:{runner_cfg}"},
+    )
+
 # The blacklist is used to prevent importing configs from sub-packages
 _BLACKLIST_PKGS = ["utils"]
 # Import all configs in this package

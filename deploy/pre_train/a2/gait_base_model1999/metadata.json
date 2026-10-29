@@ -1,0 +1,22 @@
+{
+  "model_name": "A2 gait warm-start base: model_1999",
+  "source_task": "RobotLab-A2-Stairs-Sym-v0",
+  "source_run": "logs/rsl_rl/a2_stairs_sym_cts/2026-10-23_19-34-41_a6000_stairs_sym",
+  "initialization": "Warm branch loads all neural weights with fresh optimizers; scratch branch never loads this file.",
+  "integrity": "Checkpoint is an unmodified byte-for-byte copy, including its historical provenance fields.",
+  "configuration_note": "params files are provenance snapshots, not new launch settings. Machine-specific project paths were made repository-relative in the env snapshot. Use registered gait tasks and the experiment manager.",
+  "files": {
+    "model_1999.pt": {
+      "bytes": 26386809,
+      "sha256": "e929e9df83c945dc24df9888d7059a2b1c4f7293fd50d3dec7f250b2fa007a2d"
+    },
+    "params/agent.yaml": {
+      "bytes": 1547,
+      "sha256": "60b22d668f808daf640efe94a2bd468ba8bef6fb7b2efac217b82855c8095056"
+    },
+    "params/env.yaml": {
+      "bytes": 59676,
+      "sha256": "689d46056b8329de270fab93ea96b591c27abb81286c0ec1578c05b0467190b8"
+    }
+  }
+}

@@ -309,6 +309,9 @@ def run_case(task):
                       action.copy(), obs.copy(), applied_cmd.copy(), foot, (foot - data.qpos[:3]) @ rotation,
                       foot[:, 2] - radii - height, forcebuf.mean(0), normalbuf.mean(0), stancebuf.mean(0),
                       nonfootbuf.mean(0), satbuf.mean(0), data.qpos.copy(), data.qvel.copy(), top_contact_seen.copy()]
+            # Gait balance uses world-vertical contact force. Keep the original
+            # normal-force completion contract and record the extra statistic.
+            rows.setdefault("stance_fraction_vertical", []).append((forcebuf > CONTACT_N).mean(0))
             for key, value in zip(keys, values):
                 rows[key].append(value)
             if terrain == "stairs":
@@ -373,6 +376,8 @@ def main():
     parser.add_argument("--terrains", nargs="+", choices=("stairs", "flat"), default=["stairs", "flat"])
     parser.add_argument("--speeds", nargs="+", type=float, default=[0.3, 0.5, 0.7])
     parser.add_argument("--flat-speed", type=float, default=0.5)
+    parser.add_argument("--flat-speeds", nargs="+", type=float,
+                        help="Evaluate multiple flat-ground speeds; overrides --flat-speed")
     parser.add_argument("--seeds", nargs="+", type=int, default=list(range(5)))
     parser.add_argument("--workers", type=int, choices=(1, 2, 3), default=2)
     parser.add_argument("--duration", type=float, help="Override timeout for smoke tests")
@@ -384,8 +389,9 @@ def main():
         return
     if args.output is None:
         parser.error("--output is required unless --write-scene is used")
-    if any(speed <= 0 for speed in args.speeds + [args.flat_speed]):
-        parser.error("Speeds must be positive")
+    flat_speeds = args.flat_speeds if args.flat_speeds is not None else [args.flat_speed]
+    if any(not np.isfinite(speed) or speed <= 0 for speed in args.speeds + flat_speeds):
+        parser.error("Speeds must be finite and positive")
     if args.duration is not None and args.duration < 0.1:
         parser.error("--duration must be at least 0.1 s")
     args.output = args.output.resolve()
@@ -397,7 +403,7 @@ def main():
     policy = str(cfg.policy_path.resolve())
     tasks = [(terrain, speed, seed, {"output": str(args.output), "policy": policy, "config": args.config,
                                     "duration": args.duration})
-             for terrain in args.terrains for speed in (args.speeds if terrain == "stairs" else [args.flat_speed])
+             for terrain in args.terrains for speed in (args.speeds if terrain == "stairs" else flat_speeds)
              for seed in args.seeds]
     sources = [Path(__file__), GEOMETRY_PATH, SCENE, ROOT / "resources/a2_description/a2.xml",
                ROOT / "resources/a2_description/flat.xml", ROOT / "deploy/deploy_mujoco/deploy_a2.py",
@@ -410,6 +416,7 @@ def main():
                 "controller": "Imported production deploy_a2 observation, mapping, torque clipping, delay sampling; CPU TorchScript internal history reset per run",
                 "criteria_version": "v2_individual_top_contacts",
                 "completion": "Each foot independently records a valid top contact: sphere fits inside top XY, sole within 2 cm of top, mean normal force >10 N. Once every foot has such a contact and all current feet fit top XY with soles no lower than top-2 cm, ascent_completed latches and command becomes zero. All four soles within 2 cm of top, mean normal force >10 N, stance fraction >=0.5, tilt<30 deg for continuous 0.4 s.",
+                "flat_completion": "Constant body-frame [vx, 0, 0] command for the full duration, with no resets, heading correction or terminal standing test. completed_flat means the rollout finished without a detected fall/nonfinite state, not a straight-path accuracy pass.",
                 "failures": "Tilt>60 deg; any foot sphere exceeds lateral support boundary while alongside stairs; any foot crosses landing end; timeout.",
                 "contact": "normal force>10 N each physics substep; 50 Hz records contain substep mean force and stance fractions",
                 "stage_definition": "Base x in [1.5,2.3),[2.3,3.1),[3.1,3.9) approximates steps1-4/5-8/9-12. Transition footprints can straddle stages. Tracking excludes zero-command settling.",

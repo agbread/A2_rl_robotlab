@@ -119,3 +119,22 @@ class StairsSymMoECTSRunnerCfg(StairsMoECTSRunnerCfg):
             "data_augmentation_func": "robot_lab.tasks.a2.mdp.symmetry:mirror_a2_observations",
             "ramp_updates": 200,
         }
+
+
+@configclass
+class GaitWarmRunnerCfg(StairsSymMoECTSRunnerCfg):
+    experiment_name = "a2_gait_warm"
+    max_iterations = 10000
+
+
+@configclass
+class GaitScratchRunnerCfg(MoECTSRunnerCfg):
+    experiment_name = "a2_gait_scratch"
+    init_at_random_ep_len: bool = False
+
+    def __post_init__(self):
+        self.algorithm.symmetry_cfg = {
+            "use_data_augmentation": False, "use_mirror_loss": True, "mirror_loss_coeff": .05,
+            "data_augmentation_func": "robot_lab.tasks.a2.mdp.symmetry:mirror_a2_observations",
+            "ramp_updates": 1000,
+        }

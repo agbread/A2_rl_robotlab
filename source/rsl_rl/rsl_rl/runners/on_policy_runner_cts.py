@@ -157,9 +157,17 @@ class OnPolicyRunnerCTS:
                 rnd_weight=self.alg.rnd.weight if self.alg_cfg["rnd_cfg"] else None,
             )
 
+            # Opt-in remote experiment hook: metadata, finite checks and graceful
+            # budget/signal stops. Existing callers have identical behavior.
+            hook = getattr(self, "training_update_hook", None)
+            keep_training = hook(self, it, collect_time, learn_time, loss_dict) if hook else True
+
             # Save model
             if it % self.cfg["save_interval"] == 0:
                 self.save(os.path.join(self.logger.log_dir, f"model_{it}.pt"), it=it, last_model=False)  # type: ignore
+
+            if not keep_training:
+                break
 
         # Save the final model after training
         if self.logger.log_dir is not None and not self.logger.disable_logs:
@@ -187,12 +195,16 @@ class OnPolicyRunnerCTS:
             saved_dict["initial_checkpoint"] = self.initial_checkpoint
         if hasattr(env, "get_training_state"):
             saved_dict["env_training_state"] = env.get_training_state()
+        if hasattr(self, "experiment_metadata"):
+            saved_dict["gait_experiment"] = self.experiment_metadata
         # Save RND model if used
         if self.alg_cfg["rnd_cfg"]:
             saved_dict["rnd_state_dict"] = self.alg.rnd.state_dict()
             if self.alg.rnd_optimizer:
                 saved_dict["rnd_optimizer_state_dict"] = self.alg.rnd_optimizer.state_dict()
-        torch.save(saved_dict, path)
+        temporary = str(path) + ".tmp"
+        torch.save(saved_dict, temporary)
+        os.replace(temporary, path)
 
         # Upload model to external logging services
         self.logger.save_model(path, self.current_learning_iteration)
